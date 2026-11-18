@@ -91,7 +91,11 @@ export const sfx = {
     const notes = [262, 330, 392, 330, 294, 392, 440, 392];
     let i = 0;
     musicTimer = setInterval(() => {
-      if (!muted) tone(notes[i % notes.length], 0.9, 'triangle', 0.025);
+      if (!muted) {
+        tone(notes[i % notes.length], 0.9, 'triangle', 0.025);
+        // A soft bass note every fourth beat, one octave down.
+        if (i % 4 === 0) tone(notes[i % notes.length] / 2, 0.9, 'sine', 0.02);
+      }
       i++;
     }, 620);
   },
