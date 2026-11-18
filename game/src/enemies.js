@@ -7,7 +7,7 @@ export const ENEMY_TYPES = {
   spitter:  { hp: 16, speed: 37, radius: 12, damage: 5,  xp: 2, color: '#3fae8a', glow: '#7fe0c0', score: 25 },
   wraith:   { hp: 22, speed: 60, radius: 12, damage: 8,  xp: 2, color: '#c9d4ff', glow: '#ffffff', score: 25 },
   elite:    { hp: 130, speed: 38, radius: 26, damage: 16, xp: 8, color: '#ffd166', glow: '#ffe9a8', score: 100 },
-  boss:     { hp: 800, speed: 33, radius: 44, damage: 20, xp: 25, color: '#ff5d73', glow: '#ffb3bd', score: 500 },
+  boss:     { hp: 1200, speed: 38, radius: 44, damage: 24, xp: 25, color: '#ff5d73', glow: '#ffb3bd', score: 500 },
 };
 
 // Which types may appear at a given elapsed time (seconds), with weights.
@@ -17,20 +17,22 @@ export function spawnTable(elapsed) {
   if (elapsed > 60) table.push(['wraith', 5]);
   if (elapsed > 90) table.push(['brute', 4]);
   if (elapsed > 120) table.push(['spitter', 5]);
-  if (elapsed > 180) table.push(['elite', 1]);
+  if (elapsed > 180) table.push(['elite', 2]);
   return table;
 }
 
 // Enemies alive cap and spawn interval shrink as the night deepens.
+// Tuned 18 Nov: a kiting bot won 12/12 before this, so the late night
+// now presses harder — more bodies, faster spawns, tougher hides.
 export function spawnInterval(elapsed) {
-  return Math.max(0.55, 1.3 - elapsed * 0.0022);
+  return Math.max(0.32, 1.25 - elapsed * 0.003);
 }
 
 export function maxAlive(elapsed) {
-  return Math.min(80, 16 + Math.floor(elapsed / 9));
+  return Math.min(130, 20 + Math.floor(elapsed / 4));
 }
 
 // HP multiplier so late waves stay threatening without one-shotting.
 export function hpScale(elapsed) {
-  return 1 + elapsed / 200;
+  return 1 + elapsed / 100;
 }
