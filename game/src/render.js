@@ -1,6 +1,7 @@
 // Canvas rendering: the night arena, entities, HUD and menu overlays.
 // Everything is drawn in code; there are no image or font assets.
 import { ARENA_W, ARENA_H, SURVIVE_TIME } from './world.js';
+import { UPGRADES } from './upgrades.js';
 import { drawParticles } from './particles.js';
 
 const W = 1280, H = 720;
@@ -43,6 +44,27 @@ export function drawWorld(ctx, w, viewT) {
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
+  // The moon: a fixed point in the sky, so the night has a light
+  // to match Luma's. Screen-space, drawn before the parallax stars.
+  const moonX = W - 180, moonY = 112;
+  const mg = ctx.createRadialGradient(moonX, moonY, 10, moonX, moonY, 140);
+  mg.addColorStop(0, 'rgba(232, 236, 255, 0.16)');
+  mg.addColorStop(1, 'rgba(232, 236, 255, 0)');
+  ctx.fillStyle = mg;
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, 140, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#e8ecff';
+  ctx.beginPath();
+  ctx.arc(moonX, moonY, 42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(154, 163, 199, 0.55)';
+  ctx.beginPath();
+  ctx.arc(moonX - 14, moonY - 8, 8, 0, Math.PI * 2);
+  ctx.arc(moonX + 12, moonY + 12, 6, 0, Math.PI * 2);
+  ctx.arc(moonX + 16, moonY - 16, 5, 0, Math.PI * 2);
+  ctx.fill();
+
   // Stars: hashed positions so they scatter instead of lining up.
   ctx.fillStyle = 'rgba(232, 236, 255, 0.5)';
   for (let i = 0; i < 90; i++) {
@@ -50,7 +72,8 @@ export function drawWorld(ctx, w, viewT) {
     const sy = (i * 104729) % H;
     const tw = 0.3 + 0.2 * Math.sin(viewT * 1.5 + i);
     ctx.globalAlpha = Math.max(0.08, tw);
-    ctx.fillRect(sx - (camX * 0.12 % W), sy, 2, 2);
+    const starX = (((sx - camX * 0.12) % W) + W) % W;
+    ctx.fillRect(starX, sy, 2, 2);
   }
   ctx.globalAlpha = 1;
 
@@ -66,6 +89,45 @@ export function drawWorld(ctx, w, viewT) {
   ctx.strokeStyle = 'rgba(255, 209, 102, 0.35)';
   ctx.lineWidth = 3;
   ctx.strokeRect(-camX, -camY, ARENA_W, ARENA_H);
+
+  // Arena props: glowing crystals, mushrooms and stones, fixed in the
+  // world so the night has texture wherever the camera goes.
+  for (const pr of w.props) {
+    const px = pr.x - camX, py = pr.y - camY;
+    if (px < -70 || px > W + 70 || py < -70 || py > H + 70) continue;
+    const pulse = 0.72 + 0.28 * Math.sin(viewT * 1.4 + pr.phase);
+    const sz = 15 * pr.size;
+    if (pr.kind === 'crystal') {
+      ctx.save();
+      ctx.globalAlpha = pulse;
+      ctx.shadowColor = PALETTE.teal;
+      ctx.shadowBlur = 14;
+      ctx.fillStyle = '#2ec4b6';
+      ctx.beginPath();
+      ctx.moveTo(px, py - sz);
+      ctx.lineTo(px + sz * 0.45, py);
+      ctx.lineTo(px, py + sz * 0.5);
+      ctx.lineTo(px - sz * 0.45, py);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else if (pr.kind === 'shroom') {
+      ctx.save();
+      ctx.globalAlpha = 0.6 + 0.4 * pulse;
+      ctx.fillStyle = '#8e6cc9';
+      ctx.beginPath();
+      ctx.arc(px, py - sz * 0.3, sz * 0.55, Math.PI, 0);
+      ctx.fill();
+      ctx.fillStyle = '#c9b8f0';
+      ctx.fillRect(px - sz * 0.12, py - sz * 0.3, sz * 0.24, sz * 0.55);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = 'rgba(120, 130, 180, 0.35)';
+      ctx.beginPath();
+      ctx.ellipse(px, py, sz * 0.7, sz * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
   // --- gems
   for (const g of w.gems) {
@@ -83,6 +145,8 @@ export function drawWorld(ctx, w, viewT) {
   for (const e of w.enemies) {
     const ex = e.x - camX, ey = e.y - camY;
     const slow = e.slowT > 0;
+    // Spawn fade-in: materialising enemies are translucent.
+    ctx.globalAlpha = e.fade > 0 ? Math.max(0.15, 1 - e.fade / 0.5) : 1;
     ctx.save();
     ctx.shadowColor = e.glow;
     ctx.shadowBlur = 14;
@@ -129,6 +193,7 @@ export function drawWorld(ctx, w, viewT) {
       ctx.textAlign = 'center';
       ctx.fillText('GLOOMHEART', ex, ey - e.radius - 22);
     }
+    ctx.globalAlpha = 1;
   }
 
   // --- foe shots
@@ -211,6 +276,16 @@ export function drawWorld(ctx, w, viewT) {
     ctx.globalAlpha = 1;
   }
 
+  // --- low-health vignette: the dark closes in under 30% health.
+  if (w.state === 'playing' && p.hp < s.maxHp * 0.3) {
+    const a = 0.10 + 0.07 * Math.sin(viewT * 5);
+    const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.78);
+    vg.addColorStop(0, 'rgba(255, 93, 115, 0)');
+    vg.addColorStop(1, `rgba(255, 93, 115, ${a})`);
+    ctx.fillStyle = vg;
+    ctx.fillRect(0, 0, W, H);
+  }
+
   drawHud(ctx, w);
   if (w.messageT > 0) {
     ctx.fillStyle = '#ffe9a8';
@@ -289,6 +364,29 @@ function drawHud(ctx, w) {
     roundRect(ctx, W / 2 - bw / 2 + 1, 87, (bw - 2) * (boss.hp / boss.maxHp), 10, 5);
     ctx.fill();
   }
+
+  // Owned blessings: icons + rank, bottom-left, so the player can
+  // read their build at a glance. (Emoji icons fall back to a diamond
+  // where the font has no colour-emoji glyph.)
+  const owned = UPGRADES.filter((u) => (s.ranks[u.id] || 0) > 0);
+  if (owned.length > 0) {
+    let bx = 24;
+    const by = H - 44;
+    ctx.textAlign = 'left';
+    for (const u of owned) {
+      const glyph = u.icon.length === 1 ? u.icon : '◆';
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      roundRect(ctx, bx - 4, by - 18, 48, 26, 7);
+      ctx.fill();
+      ctx.fillStyle = PALETTE.gold;
+      ctx.font = 'bold 15px system-ui, sans-serif';
+      ctx.fillText(glyph, bx, by);
+      ctx.fillStyle = PALETTE.ink;
+      ctx.font = 'bold 11px system-ui, sans-serif';
+      ctx.fillText(`×${s.ranks[u.id]}`, bx + 24, by);
+      bx += 54;
+    }
+  }
 }
 
 function dimScreen(ctx) {
@@ -309,7 +407,7 @@ export function drawTitle(ctx, w, best) {
   ctx.font = '18px system-ui, sans-serif';
   ctx.fillText('Move with WASD or arrow keys — your light fights for you.', W / 2, 330);
   ctx.fillText('Gather star shards, choose blessings, survive 5 minutes until dawn.', W / 2, 360);
-  ctx.fillText('Beware Gloomheart at 4:30. Press M to mute.', W / 2, 390);
+  ctx.fillText('Beware Gloomheart at 4:15. Press M to mute.', W / 2, 390);
   ctx.fillStyle = PALETTE.gold;
   ctx.font = 'bold 24px system-ui, sans-serif';
   const pulse = 0.7 + Math.sin(Date.now() / 400) * 0.3;
