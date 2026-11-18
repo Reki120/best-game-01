@@ -1,7 +1,7 @@
 // LUMENFALL sim: fixed-step update, no DOM, no rendering here.
 // The world owns the player, enemies, projectiles, gems, waves, the Dawn
 // meter, level-ups and the win/lose state. Rendering lives in render.js.
-import { clamp, dist2 } from './rng.js';
+import { clamp, dist2, makeRng } from './rng.js';
 import { ENEMY_TYPES, spawnTable, spawnInterval, maxAlive, hpScale } from './enemies.js';
 import { UPGRADES, drawOffers } from './upgrades.js';
 import { makeParticles, spawnParticle, burst, spawnText, updateParticles } from './particles.js';
@@ -9,7 +9,7 @@ import { makeParticles, spawnParticle, burst, spawnText, updateParticles } from 
 export const ARENA_W = 2000;
 export const ARENA_H = 1400;
 export const SURVIVE_TIME = 300;
-export const BOSS_TIME = 270;
+export const BOSS_TIME = 255;
 
 const STEP = 1 / 60;
 
@@ -56,13 +56,28 @@ export function createWorld(rng, sfx) {
     orbitAngle: 0,
     bossSpawned: false,
     dawn: 0,
-    dawnReady: false,
     bossWarnT: 0,
+    starfallT: 45,
+    props: [],
     stats: baseStats(),
     message: '',
     messageT: 0,
   };
   resetRun(w);
+  // Arena dressing: fixed, deterministic props (crystals, mushrooms,
+  // stones) so the night never looks empty. Generated once per world
+  // from its own seed; they never move and never collide.
+  const prng = makeRng(20261117);
+  const kinds = ['crystal', 'shroom', 'stone'];
+  for (let i = 0; i < 26; i++) {
+    w.props.push({
+      x: 90 + prng() * (ARENA_W - 180),
+      y: 90 + prng() * (ARENA_H - 180),
+      kind: kinds[i % 3],
+      phase: prng() * Math.PI * 2,
+      size: 0.8 + prng() * 0.7,
+    });
+  }
   return w;
 }
 
@@ -74,7 +89,7 @@ function resetRun(w) {
   w.particles.count = 0; w.particles.texts.length = 0;
   w.offers = []; w.pendingLevels = 0;
   w.spawnT = 1; w.boltT = 0.4; w.novaT = 4; w.orbitAngle = 0;
-  w.bossSpawned = false; w.dawn = 0; w.dawnReady = false; w.bossWarnT = 0;
+  w.bossSpawned = false; w.dawn = 0; w.bossWarnT = 0; w.starfallT = 45;
   w.message = ''; w.messageT = 0;
   w.stats = baseStats();
   w.player = {
@@ -121,29 +136,40 @@ function levelUpOnce(w) {
 function gainXp(w, amount) {
   const s = w.stats;
   s.xp += amount;
-  while (s.xp >= s.xpNext && w.state === 'playing') {
+  // One level-up screen at a time; the rest queue in pendingLevels and
+  // are offered after the player picks (see chooseUpgrade).
+  if (s.xp >= s.xpNext && w.state === 'playing') {
     w.pendingLevels++;
     levelUpOnce(w);
-    if (w.state !== 'levelup') break;
-    break; // one level-up screen at a time; the rest queue
-  }
-  if (w.state === 'playing' && w.pendingLevels > 0) {
-    w.pendingLevels = 0;
   }
 }
 
 function spawnEnemy(w, typeId, x, y) {
   const t = ENEMY_TYPES[typeId];
-  const scale = hpScale(w.time);
+  // The boss scales gently on its own curve: at 4:30 it has ~2,000 HP,
+  // a real fight for a levelled build, not a 3,360-HP wall.
+  const scale = typeId === 'boss' ? 1 + w.time / 400 : hpScale(w.time);
   const hp = Math.round(t.hp * scale);
   w.enemies.push({
     type: typeId, x, y, hp, maxHp: hp,
-    speed: t.speed * (0.9 + w.rng() * 0.2),
+    // The night quickens as it deepens: +20% speed by 5:00.
+    speed: t.speed * (0.9 + w.rng() * 0.2) * (1 + w.time / 1500),
     radius: t.radius, damage: t.damage, xp: t.xp,
     color: t.color, glow: t.glow, score: t.score,
     flash: 0, slowT: 0, orbitCd: 0, shootT: 1.5 + w.rng() * 1.5,
     touchCd: 0, wobble: w.rng() * Math.PI * 2,
+    // Spawn fade-in: half a second of materialising, no contact damage.
+    fade: 0.5,
   });
+}
+
+// Spawn one enemy at an exact spot for staged scenes (screenshots);
+// the enemy materialises instantly (no fade-in).
+export function spawnEnemyAt(w, typeId, x, y) {
+  spawnEnemy(w, typeId, x, y);
+  const e = w.enemies[w.enemies.length - 1];
+  e.fade = 0;
+  return e;
 }
 
 function spawnRing(w) {
@@ -158,13 +184,16 @@ function spawnRing(w) {
   }
   const p = w.player;
   const angle = w.rng() * Math.PI * 2;
-  const dist = 640 + w.rng() * 90;
+  const dist = 540 + w.rng() * 90;
   const x = clamp(p.x + Math.cos(angle) * dist, 30, ARENA_W - 30);
   const y = clamp(p.y + Math.sin(angle) * dist, 30, ARENA_H - 30);
   spawnEnemy(w, type, x, y);
 }
 
 function damageEnemy(w, e, dmg, kx, ky) {
+  // Luma's light burns the dark's heart twice as hard: the boss is a
+  // fight the player can win in the final stretch, not a wall to kite.
+  if (e.type === 'boss') dmg *= 2;
   e.hp -= dmg;
   e.flash = 0.12;
   if (kx || ky) {
@@ -193,7 +222,33 @@ function killEnemy(w, e) {
       value: v, t: w.rng() * Math.PI * 2,
     });
   }
+  if (e.type === 'boss') {
+    // The climax pays off: the night breaks open.
+    w.message = 'GLOOMHEART FALLS — THE NIGHT BREAKS';
+    w.messageT = 4;
+    w.dawn = 100;
+  }
   if (w.sfx) w.sfx.enemyDie();
+}
+
+function starfall(w) {
+  const p = w.player;
+  const ang = w.rng() * Math.PI * 2;
+  const dist = 140 + w.rng() * 220;
+  const cx = clamp(p.x + Math.cos(ang) * dist, 80, ARENA_W - 80);
+  const cy = clamp(p.y + Math.sin(ang) * dist, 80, ARENA_H - 80);
+  for (let k = 0; k < 10; k++) {
+    const a = (k / 10) * Math.PI * 2;
+    w.gems.push({
+      x: cx + Math.cos(a) * 90, y: cy + Math.sin(a) * 90,
+      value: k === 0 ? 8 : (k % 3 === 0 ? 3 : 1),
+      t: w.rng() * Math.PI * 2,
+    });
+  }
+  burst(w.particles, cx, cy, '#ffd166', 40, 380);
+  w.message = '✦ STARFALL — SHARDS RAIN FROM THE SKY ✦';
+  w.messageT = 3;
+  if (w.sfx) w.sfx.gem();
 }
 
 function dawnBurst(w) {
@@ -222,7 +277,10 @@ function fireBolts(w) {
     if (e.hp <= 0) continue;
     targets.push(e);
   }
-  targets.sort((a, b) => dist2(a.x, a.y, p.x, p.y) - dist2(b.x, b.y, p.x, p.y));
+  // Aim at the boss first, then elites, then the nearest — so the
+  // Gloomheart climax is a fight, not a 30-second kite.
+  const prio = (e) => (e.type === 'boss' ? 0 : e.type === 'elite' ? 1 : 2);
+  targets.sort((a, b) => prio(a) - prio(b) || dist2(a.x, a.y, p.x, p.y) - dist2(b.x, b.y, p.x, p.y));
   const n = Math.min(s.boltCount, targets.length);
   for (let i = 0; i < n; i++) {
     const e = targets[i];
@@ -288,8 +346,18 @@ function updatePlaying(w, dt, move) {
   // --- spawner
   w.spawnT -= dt;
   if (w.spawnT <= 0 && w.enemies.length < maxAlive(w.time)) {
-    spawnRing(w);
+    // Shades arrive in packs that grow through the night: one at first,
+    // then pairs and trios — the field stays busy enough to see.
+    const pack = Math.min(3, 1 + Math.floor(w.time / 100));
+    for (let k = 0; k < pack && w.enemies.length < maxAlive(w.time); k++) spawnRing(w);
     w.spawnT = spawnInterval(w.time);
+  }
+
+  // --- starfall: every 50 s (first at 45 s) shards rain down nearby.
+  w.starfallT -= dt;
+  if (w.starfallT <= 0) {
+    w.starfallT = 50;
+    starfall(w);
   }
 
   // --- bolt auto-fire
@@ -325,17 +393,15 @@ function updatePlaying(w, dt, move) {
     }
   }
 
-  // --- dawn burst at full meter
-  if (w.dawn >= 100 && !w.dawnReady) {
-    w.dawnReady = true;
-    dawnBurst(w);
-    w.dawnReady = false;
-  }
+  // --- dawn burst at full meter (dawnBurst resets the meter to 0,
+  // so this cannot fire twice in a row).
+  if (w.dawn >= 100) dawnBurst(w);
 
   // --- enemies: chase, spitters shoot, separation
   for (const e of w.enemies) {
     if (e.hp <= 0) continue;
     if (e.flash > 0) e.flash -= dt;
+    if (e.fade > 0) e.fade -= dt;
     if (e.slowT > 0) e.slowT -= dt;
     if (e.orbitCd > 0) e.orbitCd -= dt;
     if (e.touchCd > 0) e.touchCd -= dt;
@@ -365,7 +431,7 @@ function updatePlaying(w, dt, move) {
     if (e.type === 'boss') {
       e.shootT -= dt;
       if (e.shootT <= 0) {
-        e.shootT = 6;
+        e.shootT = 4.5;
         for (let k = 0; k < 3; k++) spawnRing(w);
       }
     }
@@ -443,7 +509,7 @@ function updatePlaying(w, dt, move) {
 
   // --- contact damage + thorns
   for (const e of w.enemies) {
-    if (e.hp <= 0) continue;
+    if (e.hp <= 0 || e.fade > 0.25) continue;
     const rr = e.radius + p.radius;
     if (dist2(e.x, e.y, p.x, p.y) < rr * rr) {
       if (e.touchCd <= 0) {
