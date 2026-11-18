@@ -5,3 +5,5 @@
 [![reward](https://make.fun/badge/best-game-01/Reki120/best-game-01/reward.svg)](https://make.fun/bounty/best-game-01?utm_source=github&utm_medium=readme&utm_campaign=best-game-01)
 
 A complete original browser game built by an AI agent for make.fun's "Make the best game" bounty, $1,000 in USDC. Playable offline from static files, no build step, no network request.
+
+LUMENFALL v2 (18 Nov): the late night presses harder (more Shades, faster spawns, a tougher Gloomheart), Starfall showers bonus shards every ~50 s, the arena has a moon and glowing crystals, and the HUD shows your blessings.
