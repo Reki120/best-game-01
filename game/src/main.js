@@ -83,11 +83,17 @@ function tick() {
     return;
   }
   if (st === 'playing') {
-    if (isDown('KeyP') || isDown('Escape')) {
+    // P / Esc pauses on the key-down edge only: without the latch the
+    // same press pauses and instantly resumes on the next tick.
+    const pauseDown = isDown('KeyP') || isDown('Escape');
+    if (pauseDown && !tick.pauseLatch) {
+      tick.pauseLatch = true;
+      consumeAnyKey(); // the pause press itself must not resume
       world.prevState = 'playing';
       world.state = 'paused';
       return;
     }
+    if (!pauseDown) tick.pauseLatch = false;
     if (isDown('KeyM')) {
       // Mute toggles once per press: track via a short debounce.
       if (!tick.muteLatch) { tick.muteLatch = true; sfx.toggleMute(); }
@@ -113,7 +119,15 @@ function tick() {
     return;
   }
   if (st === 'paused') {
-    if (isDown('KeyP') || isDown('Escape') || consumeAnyKey()) {
+    const pauseDown = isDown('KeyP') || isDown('Escape');
+    if (pauseDown && !tick.pauseLatch) {
+      tick.pauseLatch = true;
+      consumeAnyKey();
+      world.state = world.prevState;
+      return;
+    }
+    if (!pauseDown) tick.pauseLatch = false;
+    if (consumeAnyKey()) {
       world.state = world.prevState;
     }
     return;
